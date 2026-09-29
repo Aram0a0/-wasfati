@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#8d6257">
+<title>وصفاتي</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#f8f1eb;color:#3f302b;font-family:-apple-system,BlinkMacSystemFont,"SF Arabic","Geeza Pro",sans-serif}
+.app{max-width:520px;margin:auto;min-height:100vh;padding:24px 18px 90px}
+h1{font-size:32px;margin:8px 0 2px}.sub{color:#8d756d;margin-bottom:22px}
+.search{background:white;border:1px solid #eaded7;border-radius:18px;padding:14px 16px;width:100%;font-size:16px;outline:none}
+.actions{display:flex;gap:10px;margin:14px 0}.btn{border:0;border-radius:16px;padding:14px 16px;font-size:15px;cursor:pointer}.primary{background:#8d6257;color:#fff;flex:1}.soft{background:#eee2db;color:#5e4740}
+.card{background:#fff;border-radius:22px;padding:16px;margin:12px 0;box-shadow:0 5px 20px #6b4d3b12}.card h3{margin:0 0 8px}.meta{color:#907b73;font-size:13px}
+textarea,input{width:100%;border:1px solid #eaded7;border-radius:14px;padding:12px;font-size:15px;margin:7px 0;background:#fff}
+label{font-weight:700;display:block;margin-top:10px}
+.empty{text-align:center;padding:50px 20px;color:#9a847b}
+#photo{display:none}
+.modal{position:fixed;inset:0;background:#0007;display:none;align-items:end;justify-content:center}
+.sheet{background:#fff;width:100%;max-width:520px;border-radius:26px 26px 0 0;padding:20px;max-height:90vh;overflow:auto}
+.close{float:left;border:0;background:#eee;border-radius:50%;width:34px;height:34px}
+.nav{position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid #eaded7;padding:10px;text-align:center}
+.nav button{border:0;background:none;font-size:14px;color:#70554d}
+#preview{display:none;width:100%;max-height:220px;object-fit:contain;border-radius:16px;margin:12px 0;background:#f5eee8}
+.progress{display:none;background:#f2e7df;border-radius:12px;padding:10px;margin:10px 0;color:#6f5148;font-size:14px}
+.small{font-size:12px;color:#9a847b;line-height:1.6}
+</style>
+<script type="module">import { PaddleOCR } from "https://cdn.jsdelivr.net/npm/@paddleocr/paddleocr-js/+esm"; window.PaddleOCR=PaddleOCR;</script>
+</head>
+<body>
+<div class="app">
+  <h1>وصفاتي</h1><div class="sub">كل وصفاتك في مكان واحد 🤎</div>
+  <input id="search" class="search" placeholder="ابحثي عن وصفة أو مكوّن..." oninput="render()">
+  <div class="actions">
+    <button class="btn primary" onclick="openEditor()">＋ إضافة وصفة</button>
+    <button class="btn soft" onclick="renderFavorites()">♡ المفضلة</button>
+  </div>
+  <div id="list"></div>
+</div>
+<div class="nav">وصفاتي &nbsp; • &nbsp; مفضلة &nbsp; • &nbsp; إضافة وصفة</div>
+
+<div id="modal" class="modal">
+ <div class="sheet">
+  <button class="close" onclick="closeEditor()">×</button>
+  <h2>إضافة وصفة</h2>
+  <button class="btn soft" onclick="document.getElementById('photo').click()">🖼️ اختاري صورة من الصور</button>
+  <input id="photo" type="file" accept="image/*" onchange="readPhoto(this)">
+  <img id="preview" alt="صورة الوصفة">
+  <div id="progress" class="progress"></div>
+<div id="photoNote" class="meta"></div>
+  <label>اسم الوصفة</label><input id="name" placeholder="مثلاً: كيكة الشوكولاتة">
+  <label>المكونات</label><textarea id="ingredients" rows="6" placeholder="اكتبي المكونات هنا..."></textarea>
+  <label>طريقة التحضير</label><textarea id="steps" rows="7" placeholder="اكتبي طريقة التحضير هنا..."></textarea>
+  <label>ملاحظات</label><textarea id="notes" rows="4" placeholder="ملاحظاتك الخاصة..."></textarea>
+  <button class="btn primary" onclick="saveRecipe()">حفظ الوصفة</button>
+  <div class="small">عند اختيار الصورة، يقرأ التطبيق النص من الصورة كاملة تلقائيًا بدون قص أو تحديد. قد تحتاج أول قراءة إلى وقت أطول لتحميل محرك OCR على الجهاز.</div>
+ </div>
+</div>
+
+
+<script>
+let recipes=JSON.parse(localStorage.getItem("wasfati")||"[]"), favoritesOnly=false, paddle=null, paddleBusy=false;
+function save(){localStorage.setItem("wasfati",JSON.stringify(recipes))}
+function render(){
+ favoritesOnly=false;
+ const q=(document.getElementById("search").value||"").trim().toLowerCase();
+ let data=recipes.filter(r=>(!q || (r.name+r.ingredients+r.steps).toLowerCase().includes(q)));
+ const el=document.getElementById("list");
+ el.innerHTML=data.length?data.map(r=>card(r)).join(""):`<div class="empty">${recipes.length?"ما لقيت وصفة بهذا البحث":"ابدئي بإضافة أول وصفة لك ✨"}</div>`;
+}
+function renderFavorites(){
+ favoritesOnly=true;document.getElementById("search").value="";
+ document.getElementById("list").innerHTML=recipes.filter(r=>r.fav).map(card).join("")||'<div class="empty">ما عندك وصفات مفضلة بعد 🤎</div>'
+}
+function card(r){
+ return `<div class="card"><h3>${esc(r.name||"وصفة بدون اسم")} ${r.fav?"♥":""}</h3>
+ <div class="meta">${new Date(r.date).toLocaleDateString("ar-SA")}</div>
+ <p>${esc((r.ingredients||"").slice(0,130))}</p>
+ <button class="btn soft" onclick="shareRecipe('${r.id}')">↗️ مشاركة</button>
+ <button class="btn soft" onclick="toggleFav('${r.id}')">${r.fav?"إزالة من المفضلة":"♡ مفضلة"}</button>
+ <button class="btn soft" onclick="delRecipe('${r.id}')">حذف</button></div>`
+}
+function openEditor(){
+ document.getElementById("modal").style.display="flex";
+ ["name","ingredients","steps","notes"].forEach(x=>document.getElementById(x).value="");
+ document.getElementById("photoNote").textContent="";
+ document.getElementById("progress").style.display="none";
+ document.getElementById("preview").style.display="none";
+ document.getElementById("photo").value="";
+}
+function closeEditor(){document.getElementById("modal").style.display="none"}
+
+function cleanOCRLine(s){
+ return String(s||"").replace(/[|¦]/g," ").replace(/[©®™]/g,"").replace(/\s+/g," ").trim();
+}
+function isNoiseLine(s){
+ const x=s.toLowerCase();
+ return !x || /https?:\/\//i.test(x) || /www\./i.test(x) || /رابط\s+ملف/i.test(x) || /تابعونا|انستقرام|تيك\s*توك|سناب|يوتيوب/i.test(x) || x.length<2;
+}
+function tidyLines(s){
+ return String(s||"").split("\n").map(cleanOCRLine).filter(x=>!isNoiseLine(x)).map(x=>x.replace(/^[•●▪◦\-–—]+\s*/,"")).join("\n");
+}
+function guessRecipeName(lines){
+ const first=cleanOCRLine(lines[0]||"");
+ let n=first.replace(/^(?:مكونات|المكونات|المقادير|المقادير المطلوبة)\s*/i,"").replace(/^(?:وصفة|وصفه)\s*[:：]?\s*/i,"").replace(/\s*[:：]\s*$/," ").trim();
+ if(!n || n.length>80 || /^(?:المكونات|المقادير|طريقة|الطريقة|الخطوات)$/i.test(n)) n="وصفة من صورة";
+ return n;
+}
+function fillFromOCR(text){
+ const lines=String(text||"").split("\n").map(cleanOCRLine).filter(Boolean).filter(x=>!isNoiseLine(x));
+ let ingredients="",steps="",name=guessRecipeName(lines);
+ const ingMatch=text.match(/(?:المكونات|المقادير|المقادير المطلوبة)\s*[:：]?\s*([\s\S]*?)(?=(?:طريقة التحضير|الطريقة|الخطوات|طريقة العمل)\s*[:：]?|$)/i);
+ const stepMatch=text.match(/(?:طريقة التحضير|الطريقة|الخطوات|طريقة العمل)\s*[:：]?\s*([\s\S]*)/i);
+ if(ingMatch) ingredients=tidyLines(ingMatch[1]);
+ if(stepMatch) steps=tidyLines(stepMatch[1]);
+ if(!ingredients && !steps) ingredients=tidyLines(lines.slice(1).join("\n"));
+ if(/^وصفة من صورة$/.test(name)){
+   const candidate=lines.find(x=>/كوكيز|كيك|كيكة|حلى|خبز|معجنات|بسكويت|تشيز|شوربة|كبسة|مكرونة|دجاج|لحم|سلطة|حلو|بان كيك|براونيز/i.test(x));
+   if(candidate) name=candidate.replace(/^مكونات\s*/i,"").replace(/[:：]$/," ").trim();
+ }
+ document.getElementById("name").value=name.slice(0,100);
+ document.getElementById("ingredients").value=ingredients;
+ document.getElementById("steps").value=steps;
+}
+
+async function getPaddle(){
+ if(paddle) return paddle;
+ if(!window.PaddleOCR) throw new Error("محرك OCR لم يحمّل بعد");
+ paddle=await window.PaddleOCR.create({
+   lang:"ar",
+   ocrVersion:"PP-OCRv5",
+   ortOptions:{backend:"wasm"}
+ });
+ return paddle;
+}
+
+async function makeReadableImage(file){
+ const img=new Image();
+ img.src=URL.createObjectURL(file);
+ await new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=reject});
+ const maxSide=2200, scale=Math.min(1,maxSide/Math.max(img.naturalWidth,img.naturalHeight));
+ const c=document.createElement("canvas");
+ c.width=Math.max(1,Math.round(img.naturalWidth*scale)); c.height=Math.max(1,Math.round(img.naturalHeight*scale));
+ const ctx=c.getContext("2d",{willReadFrequently:true});
+ ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality="high";
+ ctx.drawImage(img,0,0,c.width,c.height);
+ return c;
+}
+
+async function readPhoto(input){
+ const file=input.files && input.files[0];
+ if(!file || paddleBusy)return;
+ const preview=document.getElementById("preview");
+ preview.src=URL.createObjectURL(file); preview.style.display="block";
+ const progress=document.getElementById("progress"), note=document.getElementById("photoNote");
+ progress.style.display="block";progress.textContent="جاري تجهيز الصورة وقراءة الوصفة كاملة… ⏳";note.textContent="";
+ paddleBusy=true;
+ try{
+   const image=await makeReadableImage(file);
+   progress.textContent="جاري تشغيل قارئ العربية… قد تستغرق أول مرة وقتًا أطول ⏳";
+   const ocr=await getPaddle();
+   const [result]=await ocr.predict(image,{textRecScoreThresh:0.25});
+   const items=(result?.items||[]).filter(x=>x.text && x.text.trim());
+   // OCR returns detected lines. Sort primarily top-to-bottom, then right-to-left for Arabic.
+   items.sort((a,b)=>{
+     const ay=(a.poly||[]).reduce((s,p)=>s+p[1],0)/Math.max(1,(a.poly||[]).length);
+     const by=(b.poly||[]).reduce((s,p)=>s+p[1],0)/Math.max(1,(b.poly||[]).length);
+     if(Math.abs(ay-by)>18) return ay-by;
+     const ax=(a.poly||[]).reduce((s,p)=>s+p[0],0)/Math.max(1,(a.poly||[]).length);
+     const bx=(b.poly||[]).reduce((s,p)=>s+p[0],0)/Math.max(1,(b.poly||[]).length);
+     return bx-ax;
+   });
+   const text=items.map(x=>x.text).join("\n").trim();
+   if(!text) throw new Error("لم يتم العثور على نص");
+   fillFromOCR(text);
+   progress.style.display="none";
+   note.textContent="تمت قراءة الصورة كاملة تلقائيًا 🤎 راجعي النص قبل الحفظ.";
+ }catch(e){
+   console.error(e);
+   progress.textContent="تعذر قراءة الصورة هذه المرة. جرّبي صورة أوضح وبإضاءة جيدة.";
+   note.textContent="";
+ }finally{paddleBusy=false}
+}
+
+function saveRecipe(){
+ let r={id:Date.now().toString(),name:document.getElementById("name").value||"وصفة جديدة",ingredients:document.getElementById("ingredients").value,steps:document.getElementById("steps").value,notes:document.getElementById("notes").value,date:Date.now(),fav:false};
+ recipes.unshift(r);save();closeEditor();render()
+}
+async function shareRecipe(id){
+ let r=recipes.find(x=>x.id===id);
+ let text=`🍽️ ${r.name}\n\nالمكونات:\n${r.ingredients}\n\nطريقة التحضير:\n${r.steps}${r.notes?"\n\nملاحظات:\n"+r.notes:""}`;
+ if(navigator.share) await navigator.share({title:r.name,text}); else{await navigator.clipboard.writeText(text);alert("تم نسخ الوصفة للمشاركة 🤎")}
+}
+function toggleFav(id){let r=recipes.find(x=>x.id===id);r.fav=!r.fav;save();favoritesOnly?renderFavorites():render()}
+function delRecipe(id){if(confirm("حذف الوصفة؟")){recipes=recipes.filter(x=>x.id!==id);save();render()}}
+function esc(s){return String(s||"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
+render();
+</script>
+</body></html>
