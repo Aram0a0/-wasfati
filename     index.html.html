@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#8d6257">
+<title>وصفاتي</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#f8f1eb;color:#3f302b;font-family:-apple-system,BlinkMacSystemFont,"SF Arabic","Geeza Pro",sans-serif}
+.app{max-width:520px;margin:auto;min-height:100vh;padding:24px 18px 90px}
+h1{font-size:32px;margin:8px 0 2px}.sub{color:#8d756d;margin-bottom:22px}
+.search{background:white;border:1px solid #eaded7;border-radius:18px;padding:14px 16px;width:100%;font-size:16px;outline:none}
+.actions{display:flex;gap:10px;margin:14px 0}.btn{border:0;border-radius:16px;padding:14px 16px;font-size:15px;cursor:pointer}.primary{background:#8d6257;color:#fff;flex:1}.soft{background:#eee2db;color:#5e4740}
+.card{background:#fff;border-radius:22px;padding:16px;margin:12px 0;box-shadow:0 5px 20px #6b4d3b12}.card h3{margin:0 0 8px}.meta{color:#907b73;font-size:13px}
+textarea,input{width:100%;border:1px solid #eaded7;border-radius:14px;padding:12px;font-size:15px;margin:7px 0;background:#fff}
+label{font-weight:700;display:block;margin-top:10px}
+.empty{text-align:center;padding:50px 20px;color:#9a847b}
+#photo{display:none}
+.modal{position:fixed;inset:0;background:#0007;display:none;align-items:end;justify-content:center}
+.sheet{background:#fff;width:100%;max-width:520px;border-radius:26px 26px 0 0;padding:20px;max-height:90vh;overflow:auto}
+.close{float:left;border:0;background:#eee;border-radius:50%;width:34px;height:34px}
+.nav{position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid #eaded7;padding:10px;text-align:center}
+.nav button{border:0;background:none;font-size:14px;color:#70554d}
+#preview{display:none;width:100%;max-height:220px;object-fit:contain;border-radius:16px;margin:12px 0;background:#f5eee8}
+.progress{display:none;background:#f2e7df;border-radius:12px;padding:10px;margin:10px 0;color:#6f5148;font-size:14px}
+.small{font-size:12px;color:#9a847b;line-height:1.6}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+</head>
+<body>
+<div class="app">
+  <h1>وصفاتي</h1><div class="sub">كل وصفاتك في مكان واحد 🤎</div>
+  <input id="search" class="search" placeholder="ابحثي عن وصفة أو مكوّن..." oninput="render()">
+  <div class="actions">
+    <button class="btn primary" onclick="openEditor()">＋ إضافة وصفة</button>
+    <button class="btn soft" onclick="renderFavorites()">♡ المفضلة</button>
+  </div>
+  <div id="list"></div>
+</div>
+<div class="nav">وصفاتي &nbsp; • &nbsp; مفضلة &nbsp; • &nbsp; إضافة وصفة</div>
+
+<div id="modal" class="modal">
+ <div class="sheet">
+  <button class="close" onclick="closeEditor()">×</button>
+  <h2>إضافة وصفة</h2>
+  <button class="btn soft" onclick="document.getElementById('photo').click()">🖼️ اختاري صورة من الصور</button>
+  <input id="photo" type="file" accept="image/*" onchange="readPhoto(this)">
+  <img id="preview" alt="صورة الوصفة">
+  <div id="cropBox" style="display:none;margin:12px 0;padding:12px;background:#f8f1eb;border-radius:18px">
+  <div style="font-weight:700;margin-bottom:8px">حددي جزء الوصفة فقط 👇</div>
+  <canvas id="cropCanvas" style="width:100%;border-radius:12px;background:#fff;touch-action:none"></canvas>
+  <div style="display:flex;gap:8px;margin-top:10px">
+    <button class="btn soft" type="button" onclick="useFullPhoto()">استخدام الصورة كاملة</button>
+    <button class="btn primary" type="button" onclick="cropAndRead()">قراءة الجزء المحدد</button>
+  </div>
+</div>
+<div id="progress" class="progress"></div>
+  <div id="photoNote" class="meta"></div>
+  <label>اسم الوصفة</label><input id="name" placeholder="مثلاً: كيكة الشوكولاتة">
+  <label>المكونات</label><textarea id="ingredients" rows="6" placeholder="اكتبي المكونات هنا..."></textarea>
+  <label>طريقة التحضير</label><textarea id="steps" rows="7" placeholder="اكتبي طريقة التحضير هنا..."></textarea>
+  <label>ملاحظات</label><textarea id="notes" rows="4" placeholder="ملاحظاتك الخاصة..."></textarea>
+  <button class="btn primary" onclick="saveRecipe()">حفظ الوصفة</button>
+  <div class="small">عند اختيار صورة، يحاول التطبيق قراءة النص العربي منها على جهازك. جودة النتيجة تعتمد على وضوح الصورة والخط.</div>
+ </div>
+</div>
+
+<script>
+let recipes=JSON.parse(localStorage.getItem("wasfati")||"[]"), favoritesOnly=false, ocrWorker=null;
+
+function save(){localStorage.setItem("wasfati",JSON.stringify(recipes))}
+function render(){
+ favoritesOnly=false;
+ const q=(document.getElementById("search").value||"").trim().toLowerCase();
+ let data=recipes.filter(r=>(!q || (r.name+r.ingredients+r.steps).toLowerCase().includes(q)));
+ const el=document.getElementById("list");
+ el.innerHTML=data.length?data.map(r=>card(r)).join(""):`<div class="empty">${recipes.length?"ما لقيت وصفة بهذا البحث":"ابدئي بإضافة أول وصفة لك ✨"}</div>`;
+}
+function renderFavorites(){
+ favoritesOnly=true;document.getElementById("search").value="";
+ document.getElementById("list").innerHTML=recipes.filter(r=>r.fav).map(card).join("")||'<div class="empty">ما عندك وصفات مفضلة بعد 🤎</div>'
+}
+function card(r){
+ return `<div class="card"><h3>${esc(r.name||"وصفة بدون اسم")} ${r.fav?"♥":""}</h3>
+ <div class="meta">${new Date(r.date).toLocaleDateString("ar-SA")}</div>
+ <p>${esc((r.ingredients||"").slice(0,130))}</p>
+ <button class="btn soft" onclick="shareRecipe('${r.id}')">↗️ مشاركة</button>
+ <button class="btn soft" onclick="toggleFav('${r.id}')">${r.fav?"إزالة من المفضلة":"♡ مفضلة"}</button>
+ <button class="btn soft" onclick="delRecipe('${r.id}')">حذف</button></div>`
+}
+function openEditor(){
+ document.getElementById("modal").style.display="flex";
+ ["name","ingredients","steps","notes"].forEach(x=>document.getElementById(x).value="");
+ document.getElementById("photoNote").textContent="";
+ document.getElementById("progress").style.display="none";
+ document.getElementById("preview").style.display="none";
+ document.getElementById("photo").value="";
+}
+function closeEditor(){document.getElementById("modal").style.display="none"}
+
+async function preprocessImage(file, scale=2.5, threshold=false){
+  const img = new Image();
+  img.src = URL.createObjectURL(file);
+  await new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=reject});
+  const canvas=document.createElement("canvas");
+  const w=img.naturalWidth, h=img.naturalHeight;
+  canvas.width=Math.min(Math.round(w*scale),4000);
+  canvas.height=Math.min(Math.round(h*scale),4000);
+  const ctx=canvas.getContext("2d",{willReadFrequently:true});
+  ctx.imageSmoothingEnabled=true;
+  ctx.imageSmoothingQuality="high";
+  ctx.drawImage(img,0,0,canvas.width,canvas.height);
+  const data=ctx.getImageData(0,0,canvas.width,canvas.height);
+  const p=data.data;
+  for(let i=0;i<p.length;i+=4){
+    const y=0.299*p[i]+0.587*p[i+1]+0.114*p[i+2];
+    let v=y;
+    // Increase contrast; optional threshold makes small dark Arabic text stand out.
+    v=(v-128)*1.65+128;
+    v=Math.max(0,Math.min(255,v));
+    if(threshold) v=v>185?255:0;
+    p[i]=p[i+1]=p[i+2]=v;
+  }
+  ctx.putImageData(data,0,0);
+  return canvas;
+}
+
+async function ocrOnce(image){
+  if(!ocrWorker){
+    ocrWorker=await Tesseract.createWorker("ara",1,{
+      workerPath:"https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js",
+      langPath:"https://tessdata.projectnaptha.com/4.0.0",
+      corePath:"https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core.wasm.js"
+    });
+    await ocrWorker.setParameters({
+      tessedit_pageseg_mode:"6",
+      preserve_interword_spaces:"1"
+    });
+  }
+  const result=await ocrWorker.recognize(image);
+  return (result.data.text||"").replace(/\r/g,"").trim();
+}
+
+let cropImage=null, cropRect=null, cropDragging=false, cropStart=null;
+
+async function readPhoto(input){
+ const file=input.files && input.files[0];
+ if(!file)return;
+ const preview=document.getElementById("preview");
+ preview.src=URL.createObjectURL(file); preview.style.display="block";
+ const box=document.getElementById("cropBox");
+ const canvas=document.getElementById("cropCanvas");
+ const progress=document.getElementById("progress");
+ const note=document.getElementById("photoNote");
+ progress.style.display="none"; note.textContent="";
+ cropImage=new Image();
+ cropImage.onload=()=>{
+   const maxW=900, ratio=Math.min(1,maxW/cropImage.naturalWidth);
+   canvas.width=Math.round(cropImage.naturalWidth*ratio);
+   canvas.height=Math.round(cropImage.naturalHeight*ratio);
+   drawCrop();
+   box.style.display="block";
+ };
+ cropImage.src=URL.createObjectURL(file);
+}
+
+function drawCrop(){
+ const c=document.getElementById("cropCanvas"),ctx=c.getContext("2d");
+ ctx.clearRect(0,0,c.width,c.height);
+ ctx.drawImage(cropImage,0,0,c.width,c.height);
+ if(cropRect){
+   ctx.fillStyle="rgba(0,0,0,.45)";
+   ctx.fillRect(0,0,c.width,c.height);
+   ctx.clearRect(cropRect.x,cropRect.y,cropRect.w,cropRect.h);
+   ctx.strokeStyle="#8d6257";ctx.lineWidth=4;
+   ctx.strokeRect(cropRect.x,cropRect.y,cropRect.w,cropRect.h);
+ }
+}
+
+function canvasPoint(e){
+ const c=document.getElementById("cropCanvas"),r=c.getBoundingClientRect();
+ const t=e.touches?e.touches[0]:e;
+ return {x:Math.max(0,Math.min(c.width,(t.clientX-r.left)*c.width/r.width)),
+         y:Math.max(0,Math.min(c.height,(t.clientY-r.top)*c.height/r.height))};
+}
+function beginCrop(e){e.preventDefault();cropDragging=true;cropStart=canvasPoint(e);cropRect={x:cropStart.x,y:cropStart.y,w:1,h:1};drawCrop()}
+function moveCrop(e){
+ if(!cropDragging)return;e.preventDefault();
+ const p=canvasPoint(e),x=Math.min(cropStart.x,p.x),y=Math.min(cropStart.y,p.y);
+ cropRect={x,y,w:Math.abs(p.x-cropStart.x),h:Math.abs(p.y-cropStart.y)};drawCrop();
+}
+function endCrop(){cropDragging=false}
+const cc=document.getElementById("cropCanvas");
+cc.addEventListener("mousedown",beginCrop);cc.addEventListener("mousemove",moveCrop);window.addEventListener("mouseup",endCrop);
+cc.addEventListener("touchstart",beginCrop,{passive:false});cc.addEventListener("touchmove",moveCrop,{passive:false});cc.addEventListener("touchend",endCrop);
+
+function useFullPhoto(){
+ cropRect={x:0,y:0,w:document.getElementById("cropCanvas").width,h:document.getElementById("cropCanvas").height};
+ cropAndRead();
+}
+async function cropAndRead(){
+ if(!cropImage)return;
+ if(!cropRect || cropRect.w<20 || cropRect.h<20){alert("حددي مكان النص أولًا 🤎");return}
+ const c=document.createElement("canvas"), sx=cropImage.naturalWidth/document.getElementById("cropCanvas").width;
+ const sy=cropImage.naturalHeight/document.getElementById("cropCanvas").height;
+ c.width=Math.min(Math.round(cropRect.w*sx),4000);c.height=Math.min(Math.round(cropRect.h*sy),4000);
+ c.getContext("2d").drawImage(cropImage,cropRect.x*sx,cropRect.y*sy,cropRect.w*sx,cropRect.h*sy,0,0,c.width,c.height);
+ const progress=document.getElementById("progress"),note=document.getElementById("photoNote");
+ progress.style.display="block";progress.textContent="جاري قراءة الجزء المحدد… ⏳";
+ try{
+   const blob=await new Promise(res=>c.toBlob(res,"image/jpeg",.95));
+   const enhanced=await preprocessImage(blob,2.8,false);
+   const text=await ocrOnce(enhanced);
+   if(!text.trim())throw new Error("empty");
+   fillFromOCR(text);
+   progress.style.display="none";
+   note.textContent="تمت قراءة الجزء المحدد 🤎 راجعي النص قبل الحفظ.";
+   document.getElementById("cropBox").style.display="none";
+ }catch(e){
+   console.error(e);progress.textContent="ما قدرت أقرأ الجزء المحدد. كبّري النص وحددي مساحة الكلام فقط.";
+ }
+}
+
+function fillFromOCR(text){
+ const lines=text.split("\n").map(x=>x.trim()).filter(Boolean);
+ let name=lines[0]||"وصفة من صورة";
+ let ingredients="",steps="",notes="";
+ const ingMatch=text.match(/(?:المكونات|المقادير|المقادير المطلوبة)\s*[:：]?\s*([\s\S]*?)(?=(?:طريقة التحضير|الطريقة|الخطوات|طريقة العمل)\s*[:：]?|$)/i);
+ const stepMatch=text.match(/(?:طريقة التحضير|الطريقة|الخطوات|طريقة العمل)\s*[:：]?\s*([\s\S]*)/i);
+ if(ingMatch) ingredients=ingMatch[1].trim();
+ if(stepMatch) steps=stepMatch[1].trim();
+ if(!ingredients && !steps){
+   // When the photo has no headings, keep the OCR in ingredients rather than
+   // incorrectly calling it a preparation method.
+   ingredients=lines.slice(1).join("\n");
+ }
+ document.getElementById("name").value=name.slice(0,100);
+ document.getElementById("ingredients").value=ingredients;
+ document.getElementById("steps").value=steps;
+}
+
+function saveRecipe(){
+ let r={id:Date.now().toString(),name:document.getElementById("name").value||"وصفة جديدة",
+ ingredients:document.getElementById("ingredients").value,
+ steps:document.getElementById("steps").value,
+ notes:document.getElementById("notes").value,date:Date.now(),fav:false};
+ recipes.unshift(r);save();closeEditor();render()
+}
+async function shareRecipe(id){
+ let r=recipes.find(x=>x.id===id);
+ let text=`🍽️ ${r.name}\n\nالمكونات:\n${r.ingredients}\n\nطريقة التحضير:\n${r.steps}${r.notes?"\n\nملاحظات:\n"+r.notes:""}`;
+ if(navigator.share) await navigator.share({title:r.name,text});
+ else{await navigator.clipboard.writeText(text);alert("تم نسخ الوصفة للمشاركة 🤎")}
+}
+function toggleFav(id){let r=recipes.find(x=>x.id===id);r.fav=!r.fav;save();favoritesOnly?renderFavorites():render()}
+function delRecipe(id){if(confirm("حذف الوصفة؟")){recipes=recipes.filter(x=>x.id!==id);save();render()}}
+function esc(s){return String(s||"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
+render();
+</script>
+</body></html>
